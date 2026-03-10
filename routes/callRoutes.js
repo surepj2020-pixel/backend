@@ -185,7 +185,7 @@ router.post('/', async (req, res) => {
 // ── GET /api/calls  — List all call logs ─────────────────────────────────────
 router.get('/', async (req, res) => {
     try {
-        const { receivingNumber, limit = 50, startDate, endDate } = req.query;
+        const { receivingNumber, limit = 520, startDate, endDate } = req.query;
 
         const filter = {};
         if (receivingNumber) filter.receivingNumber = receivingNumber;
