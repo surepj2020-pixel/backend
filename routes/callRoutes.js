@@ -6,7 +6,7 @@ const WhatsAppRoute = require('../models/WhatsAppRoute');
 
 const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const TWILIO_WA_FROM = process.env.TWILIO_WHATSAPP_FROM; // e.g. whatsapp:+14155238886
+const TWILIO_WA_FROM = process.env.TWILIO_WHATSAPP_FROM;
 
 let twilioClient = null;
 if (TWILIO_SID && TWILIO_TOKEN) {
@@ -17,18 +17,25 @@ if (TWILIO_SID && TWILIO_TOKEN) {
 }
 
 /**
- * Send a WhatsApp message via Twilio (or mock-log if not configured).
+ * Send an APPROVED WhatsApp message via Twilio Content API.
  */
-async function sendWhatsApp(to, body) {
+async function sendWhatsApp(to, serviceName, callLogs) {
     const waTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
-    if (twilioClient && TWILIO_WA_FROM) {
+    const CONTENT_SID = process.env.TWILIO_CONTENT_SID; // Your HX... SID
+
+    if (twilioClient && TWILIO_WA_FROM && CONTENT_SID) {
         try {
             const msg = await twilioClient.messages.create({
-                to: waTo,
                 from: TWILIO_WA_FROM,
-                body,
+                to: waTo,
+                contentSid: CONTENT_SID,
+                // Maps your data to the {{1}} and {{2}} in your template
+                contentVariables: JSON.stringify({
+                    "1": serviceName,
+                    "2": callLogs
+                })
             });
-            console.log(`[WA] Sent to ${waTo} — SID: ${msg.sid}`);
+            console.log(`[WA] Template Sent to ${waTo} — SID: ${msg.sid}`);
             return true;
         } catch (err) {
             console.error(`[WA] Twilio error: ${err.message}`);
@@ -37,7 +44,8 @@ async function sendWhatsApp(to, body) {
     } else {
         console.log(`\n[WA MOCK] ─────────────────────────────`);
         console.log(`[WA MOCK] To:      ${waTo}`);
-        console.log(`[WA MOCK] Message: ${body}`);
+        console.log(`[WA MOCK] Service: ${serviceName}`);
+        console.log(`[WA MOCK] Logs:    \n${callLogs}`);
         console.log(`[WA MOCK] ─────────────────────────────\n`);
         return true;
     }
@@ -120,7 +128,6 @@ router.post('/', async (req, res) => {
                 }
 
                 // If we've hit the cycle count, fire the WA message and rotate
-                // (Note: this works even if isDuplicate is true, in case the cycle was already fulfilled but failed to clear earlier)
                 if (updated.currentBatchCount >= updated.cycleCount) {
                     const handlerNumber = updated.whatsappNumbers[updated.currentIndex];
                     const nextIndex = (updated.currentIndex + 1) % updated.whatsappNumbers.length;
@@ -130,24 +137,22 @@ router.post('/', async (req, res) => {
                     const serviceUser = await User.findOne({ phoneNumber: receivingNumber }).select('serviceName').lean();
                     const serviceName = serviceUser ? serviceUser.serviceName : receivingNumber;
 
-                    // Build the message body
-                    const lines = updated.currentBatch.map((entry) => {
+                    // Build the logs string for the template variable {{2}}
+                    const logsString = updated.currentBatch.map((entry) => {
                         const ts = new Date(entry.timestamp).toLocaleString('en-IN', {
                             timeZone: 'Asia/Kolkata',
                             day: 'numeric',
-                            month: 'numeric',
+                            month: 'short',
                             year: 'numeric',
                             hour: 'numeric',
                             minute: '2-digit',
                             hour12: true,
                         });
-                        return ` ${entry.callerNumber}  -  ${ts}`;
-                    });
-                    const msgBody =
-                        `Service Name: ${serviceName}\n\n` +
-                        lines.join('\n');
+                        return `${entry.callerNumber} (${ts})`;
+                    }).join('\n'); // Joins multiple logs with a new line so it looks clean in WhatsApp
 
-                    await sendWhatsApp(handlerNumber, msgBody);
+                    // Pass the mapped variables to the updated function
+                    await sendWhatsApp(handlerNumber, serviceName, logsString);
 
                     // Rotate index and reset batch
                     await WhatsAppRoute.findByIdAndUpdate(waRoute._id, {
