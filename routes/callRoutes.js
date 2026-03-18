@@ -29,11 +29,11 @@ async function sendWhatsApp(to, serviceName, callLogs) {
                 from: TWILIO_WA_FROM,
                 to: waTo,
                 contentSid: CONTENT_SID,
-                // Pass as a plain object, NOT stringified JSON
-                contentVariables: {
-                    "1": serviceName.toString().substring(0, 100),
-                    "2": callLogs.toString().substring(0, 1000)
-                }
+                // Maps your data to the {{1}} and {{2}} in your template
+                contentVariables: JSON.stringify({
+                    "1": serviceName,
+                    "2": callLogs
+                })
             });
             console.log(`[WA] Template Sent to ${waTo} — SID: ${msg.sid}`);
             return true;
