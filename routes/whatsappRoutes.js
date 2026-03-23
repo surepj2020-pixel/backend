@@ -45,24 +45,26 @@ router.put('/:id', async (req, res) => {
     try {
         const { whatsappNumbers, cycleCount, resetCycle } = req.body;
 
-        const update = {};
-        if (whatsappNumbers !== undefined) update.whatsappNumbers = whatsappNumbers;
-        if (cycleCount !== undefined) update.cycleCount = cycleCount;
+        const config = await WhatsAppRoute.findById(req.params.id);
+        if (!config) return res.status(404).json({ message: 'Config not found' });
+
+        if (whatsappNumbers !== undefined) {
+            config.whatsappNumbers = whatsappNumbers;
+            // Ensure currentIndex is still valid for the new array
+            if (config.currentIndex >= whatsappNumbers.length) {
+                config.currentIndex = 0;
+            }
+        }
+        if (cycleCount !== undefined) config.cycleCount = cycleCount;
 
         // Allow admin to manually reset the current cycle state
         if (resetCycle) {
-            update.currentIndex = 0;
-            update.currentBatchCount = 0;
-            update.currentBatch = [];
+            config.currentIndex = 0;
+            config.currentBatchCount = 0;
+            config.currentBatch = [];
         }
 
-        const config = await WhatsAppRoute.findByIdAndUpdate(
-            req.params.id,
-            { $set: update },
-            { returnDocument: 'after', runValidators: true }
-        );
-
-        if (!config) return res.status(404).json({ message: 'Config not found' });
+        await config.save();
         res.json(config);
     } catch (err) {
         res.status(500).json({ message: err.message });

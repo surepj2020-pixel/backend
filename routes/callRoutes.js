@@ -20,6 +20,10 @@ if (TWILIO_SID && TWILIO_TOKEN) {
  * Send an APPROVED WhatsApp message via Twilio Content API.
  */
 async function sendWhatsApp(to, serviceName, callLogs) {
+    if (!to) {
+        console.error('[WA] sendWhatsApp called without a destination number');
+        return false;
+    }
     const waTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
     const CONTENT_SID = process.env.TWILIO_CONTENT_SID; // Your HX... SID
 
@@ -129,15 +133,33 @@ router.post('/', async (req, res) => {
 
                 // If we've hit the cycle count, fire the WA message and rotate
                 if (updated.currentBatchCount >= updated.cycleCount) {
-                    const handlerNumber = updated.whatsappNumbers[updated.currentIndex];
-                    const nextIndex = (updated.currentIndex + 1) % updated.whatsappNumbers.length;
+                    // 1. Determine local indices (with safety for out-of-bounds)
+                    let workingIndex = updated.currentIndex;
+                    if (!updated.whatsappNumbers || workingIndex >= updated.whatsappNumbers.length || workingIndex < 0) {
+                        console.warn(`[WA-DEBUG] currentIndex ${workingIndex} invalid for length ${updated.whatsappNumbers?.length}. Resetting to 0.`);
+                        workingIndex = 0;
+                    }
+
+                    const handlerNumber = updated.whatsappNumbers[workingIndex];
+                    const nextIndex = updated.whatsappNumbers.length > 0 
+                        ? (workingIndex + 1) % updated.whatsappNumbers.length 
+                        : 0;
+
                     console.log(`[WA-DEBUG] Cycle complete! Sending to handler: ${handlerNumber}`);
 
-                    // Look up service name for this receivingNumber
+                    // 2. Rotate index and reset batch IMMEDIATELY to avoid crash-looping if sendWhatsApp fails
+                    await WhatsAppRoute.findByIdAndUpdate(waRoute._id, {
+                        $set: {
+                            currentIndex: nextIndex,
+                            currentBatchCount: 0,
+                            currentBatch: [],
+                        },
+                    });
+
+                    // 3. Prepare data and Send
                     const serviceUser = await User.findOne({ phoneNumber: receivingNumber }).select('serviceName').lean();
                     const serviceName = serviceUser ? serviceUser.serviceName : receivingNumber;
 
-                    // Build the logs string for the template variable {{2}}
                     const logsString = updated.currentBatch.map((entry) => {
                         const ts = new Date(entry.timestamp).toLocaleString('en-IN', {
                             timeZone: 'Asia/Kolkata',
@@ -149,19 +171,13 @@ router.post('/', async (req, res) => {
                             hour12: true,
                         });
                         return `${entry.callerNumber} (${ts})`;
-                    }).join('\n'); // Joins multiple logs with a new line so it looks clean in WhatsApp
+                    }).join('\n');
 
-                    // Pass the mapped variables to the updated function
-                    await sendWhatsApp(handlerNumber, serviceName, logsString);
-
-                    // Rotate index and reset batch
-                    await WhatsAppRoute.findByIdAndUpdate(waRoute._id, {
-                        $set: {
-                            currentIndex: nextIndex,
-                            currentBatchCount: 0,
-                            currentBatch: [],
-                        },
-                    });
+                    if (handlerNumber) {
+                        await sendWhatsApp(handlerNumber, serviceName, logsString);
+                    } else {
+                        console.error('[WA] Routing error: No handler number found to send to.');
+                    }
                 }
             }
         } catch (waErr) {
