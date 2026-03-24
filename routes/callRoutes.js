@@ -171,7 +171,7 @@ router.post('/', async (req, res) => {
                             hour12: true,
                         });
                         return `${entry.callerNumber} (${ts})`;
-                    }).join('\n');
+                    }).join(' | ');
 
                     if (handlerNumber) {
                         await sendWhatsApp(handlerNumber, serviceName, logsString);
